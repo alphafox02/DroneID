@@ -75,32 +75,24 @@ def decoder_thread(socket, pub):
             log("Decoder Thread Error:", e)
 
 def uart_listener(uart_device, pub):
-    """Reads ESP32 UART data and forwards it via ZMQ."""
+    """Reads ESP32 UART data line-by-line, forwarding complete JSON via ZMQ."""
     global stop
-    buffer = ""
     with serial.Serial(uart_device, baudrate=115200, timeout=1) as ser:
         while not stop:
-            if ser.in_waiting > 0:
+            # Read one line at a time, which should contain one complete JSON object
+            line = ser.readline().decode('utf-8', errors='ignore').strip()
+            if line:
+                if verbose:
+                    print("UART received line:", line)
                 try:
-                    data = ser.read(ser.in_waiting).decode('utf-8')
-                    buffer += data
-                    if buffer.count("{") == buffer.count("}"):  # Complete JSON
-                        if verbose:
-                            print("UART received:", buffer)
-
-                        try:
-                            dc = json.loads(buffer)
-                            json_data = json.dumps(dc)
-                            if pub:
-                                pub.send_string(json_data)
-                            if verbose:
-                                print(f"Forwarded via ZMQ: {json_data}")
-                            buffer = ""
-                        except json.JSONDecodeError as e:
-                            log("UART JSON Decode Error:", e)
-                            buffer = ""
-                except Exception as e:
-                    log("UART Read Error:", e)
+                    dc = json.loads(line)
+                    json_data = json.dumps(dc)
+                    if pub:
+                        pub.send_string(json_data)
+                    if verbose:
+                        print(f"Forwarded via ZMQ: {json_data}")
+                except json.JSONDecodeError as e:
+                    log("UART JSON Decode Error:", e)
             else:
                 time.sleep(0.1)
 
@@ -284,4 +276,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
     
