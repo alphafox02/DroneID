@@ -155,6 +155,7 @@ def process_decoded_data(dc, pub):
                                         msg["Basic ID"]["MAC"] = adv_a
                                         # Add RSSI from AUX_ADV_IND
                                         msg["Basic ID"]["RSSI"] = dc["AUX_ADV_IND"]["rssi"]
+                                        msg["Basic ID"]["type"] = "bt"
                             json_data = json.dumps(json_obj)
                         except json.JSONDecodeError:
                             pass
@@ -174,6 +175,8 @@ def process_decoded_data(dc, pub):
                 print("Open Drone ID WIFI\n-------------------------\n")
             if "AUX_ADV_IND" in dc:
                 field["RSSI"] = dc["AUX_ADV_IND"]["rssi"]
+            # *** Add the device type for Wi-Fi ***
+            field["type"] = "wifi"
             if "AdvData" in field:
                 try:
                     fields = decode(structhelper_io(bytes.fromhex(field["AdvData"])))
@@ -183,6 +186,8 @@ def process_decoded_data(dc, pub):
                         # Add RSSI to decoded fields if available
                         if "AUX_ADV_IND" in dc:
                             field_decoded["RSSI"] = dc["AUX_ADV_IND"]["rssi"]
+                        # *** Add the device type for Wi-Fi ***
+                        field_decoded["type"] = "wifi"
                         
                         json_data = json.dumps(field_decoded)
                         if pub:
