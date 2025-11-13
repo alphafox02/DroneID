@@ -254,7 +254,7 @@ def main():
     if interface is not None:
         sniffer = AsyncSniffer(
             iface=interface,
-            lfilter=lambda s: s.haslayer(Dot11) and s.getlayer(Dot11).subtype in (0, 0x8, 0x13),
+            lfilter=lambda s: s.getlayer(Dot11).subtype == 0x8,
             prn=filter_frames,
         )
         sniffer.start()
