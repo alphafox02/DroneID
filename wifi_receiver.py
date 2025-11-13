@@ -14,7 +14,7 @@ from Library.utils import search_interfaces, get_iw_interfaces, extract_wifi_if_
     set_interface_channel, cexec, enable_managed_mode
 from OpenDroneID.wifi_parser import oui_to_parser
 from scapy.all import *
-from scapy.layers.dot11 import Dot11EltVendorSpecific, Dot11, Dot11Elt
+from scapy.layers.dot11 import Dot11EltVendorSpecific, Dot11, Dot11Elt, Dot11Action
 import zmq
 
 verbose = False
@@ -94,6 +94,51 @@ def channel_hopper(interface: str,
         while time.time() < end and not stop_evt.is_set():
             time.sleep(0.1)
 
+# NEW: NAN / ASTM Wi-Fi RID Action Frame parser
+def parse_nan_action_frame(packet: Packet) -> None:
+    global socket
+    global verbose
+
+    if not packet.haslayer(Dot11Action):
+        return
+
+    raw = bytes(packet[Dot11Action])
+    if len(raw) < 7:
+        return
+
+    # Public Action + NAN
+    if raw[0] != 0x04 or raw[1] != 0x09:
+        return
+
+    # ASTM / OpenDroneID OUI
+    oui_bytes = raw[2:5]
+    if oui_bytes != b'\xFA\x0B\xBC':
+        return
+
+    vend_type = raw[5]
+    vendor_payload = bytes([vend_type]) + raw[6:]  # match vendor IE layout
+
+    mac = packet.addr2
+    parser = oui_to_parser(int.from_bytes(oui_bytes, 'big'), vendor_payload)
+    if parser is None:
+        return
+
+    msg = None
+    if "DRI" in parser.msg:
+        msg = parser.msg["DRI"]
+    elif "Beacon" in parser.msg:
+        msg = parser.msg["Beacon"]
+
+    if msg is None:
+        return
+
+    out = {"DroneID": {mac: msg}}
+
+    if socket:
+        socket.send_string(json.dumps(out))
+    if not socket or verbose:
+        print(json.dumps(out))
+
 def pcapng_parser(filename: str):
     while True:
         for packet in PcapReader(filename):
@@ -113,6 +158,11 @@ def filter_frames(packet: Packet) -> None:
     # NAN Service Discovery Frames shall be encoded in 0x13 and contain DRI Info
     # NAN Synchronization Beacon shall be encoded in 0x8 but doesn't contain DRI Info
     # Broadcast Message can only happen on channel 6 and contains DRI Info
+
+    # First, handle NAN ASTM Action Frames (ASTM Wi-Fi RID)
+    if pt is not None and pt.subtype == 0x13:
+        parse_nan_action_frame(packet)
+
     if pt is not None and pt.subtype in [0, 0x8, 0x13]:
         if packet.haslayer(Dot11EltVendorSpecific):  # check vendor specific ID -> 221
             vendor_spec: Dot11EltVendorSpecific = packet.getlayer(Dot11EltVendorSpecific)
@@ -282,4 +332,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
