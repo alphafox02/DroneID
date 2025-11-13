@@ -8,6 +8,7 @@ import argparse
 import json
 from pathlib import Path
 import socket as pysock
+from threading import Thread, Event
 
 from Library.utils import search_interfaces, get_iw_interfaces, extract_wifi_if_details, enable_monitor_mode, \
     set_interface_channel, cexec, enable_managed_mode
@@ -68,6 +69,31 @@ def _first_usb_wifi_iface() -> str | None:
 
     return None
 
+def channel_hopper(interface: str,
+                   primary_channel: int,
+                   secondary_channel: int,
+                   primary_dwell: float,
+                   secondary_dwell: float,
+                   stop_evt: Event):
+    """
+    Simple 2-channel hopper:
+      - Spend primary_dwell seconds on primary_channel
+      - Then secondary_dwell seconds on secondary_channel
+      - Repeat until stop_evt is set
+    """
+    while not stop_evt.is_set():
+        # Primary channel (e.g. 2.4 GHz ch 6)
+        set_interface_channel(interface, primary_channel)
+        end = time.time() + primary_dwell
+        while time.time() < end and not stop_evt.is_set():
+            time.sleep(0.1)
+
+        # Secondary channel (e.g. 5 GHz ch 149)
+        set_interface_channel(interface, secondary_channel)
+        end = time.time() + secondary_dwell
+        while time.time() < end and not stop_evt.is_set():
+            time.sleep(0.1)
+
 def pcapng_parser(filename: str):
     while True:
         for packet in PcapReader(filename):
@@ -118,6 +144,16 @@ def main():
     aparse.add_argument("--pcap", help="Use pcap file")
     aparse.add_argument("-v", "--verbose", action="store_true", help="Print messages")
     aparse.add_argument("-g", action="store_true", help="Use 5Ghz channel 149")
+    aparse.add_argument(
+        "--hop",
+        action="store_true",
+        help="Hop between 2.4 GHz (ch 6) and 5 GHz (ch 149)",
+    )
+    aparse.add_argument(
+        "--hop-cycle",
+        default="3,1",
+        help="Dwell times in seconds for 2.4 GHz and 5 GHz when --hop is set (default: 3,1)",
+    )
     args = aparse.parse_args()
 
     # Runtime capability check (works with systemd AmbientCapabilities or setcap)
@@ -149,7 +185,12 @@ def main():
     if verbose:
         print(f"[auto] selected interface: {interface}")
 
-    if args.g:
+    hop_thread = None
+    hop_stop_evt = None
+
+    if args.hop:
+        channel = 6  # start on 2.4 GHz when hopping
+    elif args.g:
         channel = 149
     else:
         channel = 6
@@ -161,6 +202,27 @@ def main():
             exit(1)
         print(f"Setting wifi channel {channel}")
         set_interface_channel(interface, channel)
+
+        if args.hop:
+            try:
+                primary_dwell, secondary_dwell = map(
+                float, args.hop_cycle.split(",")
+                )
+            except ValueError:
+                print("Invalid --hop-cycle format, expected 'primary,secondary' (e.g. 3,1)")
+                sys.exit(1)
+
+            print(
+                f"Channel hopping enabled: ch 6 ({primary_dwell}s) <-> ch 149 ({secondary_dwell}s)"
+            )
+            hop_stop_evt = Event()
+            hop_thread = Thread(
+                target=channel_hopper,
+                args=(interface, 6, 149, primary_dwell, secondary_dwell, hop_stop_evt),
+                daemon=True,
+                name='chan_hopper'
+            )
+            hop_thread.start()
 
     zthread = None
     if args.zmq:
@@ -186,14 +248,13 @@ def main():
             s = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
             print("%s:" % s, *msg, end="\n", file=sys.stderr)
 
-        from threading import Thread
         zthread = Thread(target=zmq_thread, args=[socket], daemon=True, name='zmq')
         zthread.start()
 
     if interface is not None:
         sniffer = AsyncSniffer(
             iface=interface,
-            lfilter=lambda s: s.getlayer(Dot11).subtype == 0x8,
+            lfilter=lambda s: s.haslayer(Dot11) and s.getlayer(Dot11).subtype in (0, 0x8, 0x13),
             prn=filter_frames,
         )
         sniffer.start()
@@ -206,6 +267,11 @@ def main():
                 break
         print(f"Stopping sniffer on interface {interface}")
         sniffer.stop()
+
+        if hop_thread is not None and hop_stop_evt is not None:
+            hop_stop_evt.set()
+            hop_thread.join(timeout=2)
+
         if args.zmq:
             zthread.join()
         if interface is not None:
@@ -216,3 +282,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
