@@ -75,35 +75,56 @@ def decoder_thread(socket, pub):
             log("Decoder Thread Error:", e)
 
 def uart_listener(uart_device, pub):
-    """Reads ESP32 UART data and forwards it via ZMQ."""
+    """Reads ESP32 UART data and forwards it via ZMQ, with automatic reconnect."""
     global stop
     buffer = ""
-    with serial.Serial(uart_device, baudrate=115200, timeout=1) as ser:
-        while not stop:
-            if ser.in_waiting > 0:
-                try:
-                    data = ser.read(ser.in_waiting).decode('utf-8')
-                    buffer += data
-                    if buffer.count("{") == buffer.count("}"):  # Complete JSON
-                        if verbose:
-                            print("UART received:", buffer)
 
+    log(f"UART listener starting for {uart_device}")
+
+    while not stop:
+        try:
+            log(f"Attempting UART connection to {uart_device}...")
+            with serial.Serial(uart_device, baudrate=115200, timeout=1) as ser:
+                log(f"UART connected: {uart_device}")
+                buffer = ""
+
+                # Inner read loop
+                while not stop:
+                    if ser.in_waiting > 0:
                         try:
-                            dc = json.loads(buffer)
-                            json_data = json.dumps(dc)
-                            if pub:
-                                pub.send_string(json_data)
-                            if verbose:
-                                print(f"Forwarded via ZMQ: {json_data}")
-                            buffer = ""
-                        except json.JSONDecodeError as e:
-                            log("UART JSON Decode Error:", e)
-                            buffer = ""
-                except Exception as e:
-                    log("UART Read Error:", e)
-            else:
-                time.sleep(0.1)
+                            data = ser.read(ser.in_waiting).decode('utf-8')
+                            buffer += data
 
+                            # Detect complete JSON object(s)
+                            if buffer.count("{") == buffer.count("}"):
+                                if verbose:
+                                    print("UART received:", buffer)
+
+                                try:
+                                    dc = json.loads(buffer)
+                                    json_data = json.dumps(dc)
+                                    if pub:
+                                        pub.send_string(json_data)
+                                    if verbose:
+                                        print(f"Forwarded via ZMQ: {json_data}")
+
+                                except json.JSONDecodeError as e:
+                                    log("UART JSON Decode Error:", e)
+
+                                buffer = ""  # Always reset buffer afterward
+
+                        except Exception as e:
+                            log("UART Read Error:", e)
+                    else:
+                        time.sleep(0.1)
+
+        except serial.SerialException as e:
+            log(f"UART connect error ({uart_device}): {e}")
+            time.sleep(2)  # retry delay
+        except Exception as e:
+            log(f"Unexpected UART error: {e}")
+            time.sleep(2)
+            
 def dji_listener(dji_url, pub):
     """Subscribes to DJI Receiver and forwards data as-is."""
     global stop
