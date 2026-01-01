@@ -240,24 +240,22 @@ def main():
             s = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
             print("%s:" % s, *msg, end="\n", file=sys.stderr)
 
-        from threading import Thread
         zthread = Thread(target=zmq_thread, args=[socket], daemon=True, name='zmq')
         zthread.start()
 
     if interface is not None:
         sniffer = AsyncSniffer(
             iface=interface,
-            lfilter=lambda s: s.getlayer(Dot11).subtype == 0x8,
+            lfilter=lambda s: s.haslayer(Dot11) and s.getlayer(Dot11).subtype == 0x8,
             prn=filter_frames,
         )
         sniffer.start()
         print(f"Starting sniffer on interface {interface}")
-        while True:
-            try:
-                sniffer.join()
+        try:
+            while True:
                 time.sleep(1)
-            except KeyboardInterrupt:
-                break
+        except KeyboardInterrupt:
+            pass
         print(f"Stopping sniffer on interface {interface}")
         sniffer.stop()
         if hop_thread is not None and hop_stop_evt is not None:
