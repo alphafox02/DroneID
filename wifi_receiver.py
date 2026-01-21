@@ -248,6 +248,7 @@ def main():
             iface=interface,
             lfilter=lambda s: s.haslayer(Dot11) and s.getlayer(Dot11).subtype == 0x8,
             prn=filter_frames,
+            store=False,  # Don't store packets in memory - prevents memory leak
         )
         sniffer.start()
         print(f"Starting sniffer on interface {interface}")
