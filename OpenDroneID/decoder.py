@@ -28,7 +28,7 @@ def decode(st):
             id = sst.bytes(0x14).rstrip(b"\x00").decode('utf-8')
             reserved = sst.bytes(3)
             msg = {"Basic ID": dict(protocol_version=ProtoVersions(0).to_text(protocol_version),
-                                    id_type=IdTypes(0).to_text(id_type), ua_type=UaTypes(0).to_text(ua_type), id=id)}
+                                    id_type=IdTypes(0).to_text(id_type), ua_type=ua_type, id=id)}
         elif msg_type == 1:
             subfields = sst.bytes(1)
             op_status = (subfields >> 4) & 0xF
