@@ -234,3 +234,115 @@ def oui_to_parser(oui, packet):
         return AstmStandard(packet)
     elif oui in [0x60601F,0x481CB9, 0x34D262]:
         return DJI(packet)
+
+
+# NAN Action Frame constants
+NAN_CATEGORY_PUBLIC_ACTION = 0x04
+NAN_ACTION_VENDOR_SPECIFIC = 0x09
+NAN_OUI_WIFI_ALLIANCE = bytes([0x50, 0x6f, 0x9a])
+NAN_OUI_TYPE = 0x13
+NAN_SERVICE_DESCRIPTOR_ATTR = 0x03
+ODID_SERVICE_ID = bytes([0x88, 0x69, 0x19, 0x9d, 0x92, 0x09])
+
+
+def parse_nan_action_frame(raw_bytes: bytes) -> dict | None:
+    """
+    Parse a NAN Action frame body (starting after the 802.11 MAC header).
+
+    NAN Service Discovery frames use:
+    - Category: 0x04 (Public Action)
+    - Action: 0x09 (Vendor Specific)
+    - OUI: 50:6f:9a (Wi-Fi Alliance)
+    - OUI Type: 0x13 (NAN)
+
+    Returns dict with AdvData if ODID data found, None otherwise.
+    """
+    if len(raw_bytes) < 6:
+        return None
+
+    # Check category and action
+    category = raw_bytes[0]
+    action = raw_bytes[1]
+
+    if category != NAN_CATEGORY_PUBLIC_ACTION or action != NAN_ACTION_VENDOR_SPECIFIC:
+        return None
+
+    # Check OUI and type
+    oui = raw_bytes[2:5]
+    oui_type = raw_bytes[5]
+
+    if oui != NAN_OUI_WIFI_ALLIANCE or oui_type != NAN_OUI_TYPE:
+        return None
+
+    # Parse NAN attributes starting at offset 6
+    offset = 6
+    while offset + 3 <= len(raw_bytes):
+        attr_id = raw_bytes[offset]
+        attr_len = int.from_bytes(raw_bytes[offset+1:offset+3], 'little')
+
+        if offset + 3 + attr_len > len(raw_bytes):
+            break
+
+        # Service Descriptor Attribute (0x03) contains ODID data
+        if attr_id == NAN_SERVICE_DESCRIPTOR_ATTR:
+            attr_data = raw_bytes[offset+3:offset+3+attr_len]
+            result = parse_nan_service_descriptor(attr_data)
+            if result:
+                return result
+
+        offset += 3 + attr_len
+
+    return None
+
+
+def parse_nan_service_descriptor(attr_data: bytes) -> dict | None:
+    """
+    Parse NAN Service Descriptor Attribute to extract ODID Service Info.
+
+    Structure:
+    - Service ID: 6 bytes
+    - Instance ID: 1 byte
+    - Requestor Instance ID: 1 byte
+    - Service Control: 1 byte (bit 4 = Service Info Present)
+    - Service Info Length: 1 byte (if Service Info Present)
+    - Service Info: variable (contains Message Counter + ODID Message Pack)
+    """
+    if len(attr_data) < 10:
+        return None
+
+    service_id = attr_data[0:6]
+    # instance_id = attr_data[6]
+    # requestor_instance_id = attr_data[7]
+    service_control = attr_data[8]
+
+    # Check if Service Info is present (bit 4)
+    service_info_present = (service_control & 0x10) != 0
+    if not service_info_present:
+        return None
+
+    service_info_length = attr_data[9]
+    if len(attr_data) < 10 + service_info_length:
+        return None
+
+    service_info = attr_data[10:10+service_info_length]
+
+    # Service Info structure:
+    # - Message Counter: 1 byte
+    # - ODID Message Pack: rest
+    if len(service_info) < 2:
+        return None
+
+    msg_counter = service_info[0]
+    odid_data = service_info[1:]
+
+    # Verify it looks like an ODID Message Pack (type 0xF in high nibble)
+    if len(odid_data) > 0 and (odid_data[0] >> 4) == 0xF:
+        return {
+            "NAN discovery": {
+                "AdvData": odid_data.hex(),
+                "MsgCounter": msg_counter,
+                "ServiceID": service_id.hex()
+            }
+        }
+
+    return None
