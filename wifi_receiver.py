@@ -147,7 +147,7 @@ def filter_frames(packet: Packet) -> None:
 
                 if raw_payload:
                     result = parse_nan_action_frame(raw_payload)
-                    if result and "NAN discovery" in result:
+                    if result and "AdvData" in result:
                         macdb["DroneID"][mac] = result
                         parsed = True
             except Exception as e:

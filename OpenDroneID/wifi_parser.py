@@ -337,12 +337,11 @@ def parse_nan_service_descriptor(attr_data: bytes) -> dict | None:
 
     # Verify it looks like an ODID Message Pack (type 0xF in high nibble)
     if len(odid_data) > 0 and (odid_data[0] >> 4) == 0xF:
+        # Return flat structure with AdvData at top level for zmq_decoder compatibility
         return {
-            "NAN discovery": {
-                "AdvData": odid_data.hex(),
-                "MsgCounter": msg_counter,
-                "ServiceID": service_id.hex()
-            }
+            "AdvData": odid_data.hex(),
+            "MsgCounter": msg_counter,
+            "ServiceID": service_id.hex()
         }
 
     return None
